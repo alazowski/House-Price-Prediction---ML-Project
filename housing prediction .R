@@ -9,6 +9,7 @@ library(data.table)
 #load data
 house <- read.csv("downloads/kc_house_data.csv")
 
+
 #stats summary of the data
 summary(house)
 str(house)
@@ -77,13 +78,14 @@ if (house$yr_renovated == 1) {
 
 
 #split the data set to train and test:
-set.seed(1234)
+set.seed(125)
 rnorm(1)
 test_set <- sample(nrow(house), nrow(house) * 0.8)
 house.test <- house[test_set, ]
 house.train <- house[-test_set, ]
 
-#simple linear regression
+  
+  #simple linear regression
 f1 <-
   as.formula(
     price ~
