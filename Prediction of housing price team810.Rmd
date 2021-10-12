@@ -1,0 +1,523 @@
+---
+title: "Housing Price prediction in King County"
+author: "Geech Hor Huot, Ana Maharjan, Aleks Lazowski, Sripada Sri Amruta"
+date: "10/9/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Introduction 
+**Why should be pursue this project?**
+
+Drive Real Estate Investment Decisions
+Understand Factors that Drive Price
+Estimate Valuation of Houses
+Provide Recommendations to Renovators for Maximizing Profit
+
+**Project Goal** 
+
+The goal of this project is as following: 
+- Determine housing variables that influence house pricing and understanding how they affect the price (positive or negative relation) 
+- Make recommendations for real estate stakeholders in King County based on findings
+
+## Library Packages 
+Loaded some useful libraries
+
+```{r cars}
+## Package Install
+library(readr) 
+library(ggplot2)
+library(ggcorrplot)
+library(plotly)
+library(reshape2)
+library(dplyr)
+library(tidyverse)
+library(data.table)
+library(skimr)
+library(psych)
+library(corrplot)
+library(glmnet)
+library(caret)
+library(package = "lattice")
+library(data.table)
+library(ggplot2)
+library(ggthemes)
+library(scales)
+#install.packages("Amelia")
+require(Amelia)
+```
+## Dataset Overview
+Dowloaded From: Kaggle
+https://www.kaggle.com/harlfoxem/housesalesprediction
+
+Original Data Source: Open Data (GIS King County)
+https://gis-kingcounty.opendata.arcgis.com/datasets/zipcodes-for-king-county-and-surrounding-area-shorelines-zipcode-shore-area/explore?location=47.493517%2C-121.477600%2C8.00&showTable=true
+
+Columns: 21 (variables)
+Dataset consist of str, int, float datatypes
+Rows: 21,613 (observations)
+
+```{r pressure, echo=FALSE}
+#load data
+house <- read.csv("https://raw.githubusercontent.com/alazowski/810-Machine-Learning-Project/main/kc_house_data%203%20(1).csv")
+```
+## Examining the dataset
+```{r}
+#examine dataset
+str(house) #21613 obs. of  21 variables
+summary(house) # Mean price: 540088
+skim(house) # no mmissing values
+```
+There are no missing values in the dataset. 
+The mean of our target variable (price) is: $540,083.52
+
+## Data Cleaning 
+```{r}
+# find missing values through missmap plot 
+missmap(
+  house,
+  col = c('yellow', 'black'),
+  y.at = 1,
+  y.labels = ' ',
+  legend = TRUE
+)
+```
+We wanted to know if houses that are renovated have any influence on the price of the house or not. Therefore, we converted the Year renovated column to Boolean (0= not renovated and 1= renovated) to help answer that question. 
+```{r}
+#change year of renovation to boolean. (0 for no renovation, 1 for renovation)
+house$yr_renovated  [house$yr_renovated  > 0] <- 1
+house$yr_renovated  [house$yr_renovated  == 0] <- 0
+```
+
+```{r}
+
+#see the relationship between house price and number of bedrooms
+agg1 <- aggregate(house$price, by=list(house$bedrooms), FUN = median)
+names(agg1) <- c('Bedrooms' ,'Median_Price')
+p <- ggplot(agg1, aes(Bedrooms, Median_Price))
+p +geom_bar(stat = 'identity', colour='white', fill = 'red')
+```
+We plotted all the predictors with our target variable and noticed that there is an outlier in the graph so we decided to removed it. 
+```{r}
+#removing extreme outliers for bedrooms columns
+room_outlier <- house %>% filter(bedrooms >= 30)  #filter the entire row
+
+#remove the outlier point
+house2 <- house[!(house$bedrooms > 30),]
+
+#plot the graph again to visualize 
+agg1 <- aggregate(house2$price, by=list(house2$bedrooms), FUN = median)
+names(agg1) <- c('Bedrooms' ,'Median_Price')
+p <- ggplot(agg1, aes(Bedrooms, Median_Price))
+p +geom_bar(stat = 'identity', colour='white', fill = 'red')
+```
+```{r}
+#Checking Bathrooms for outliers
+agg1 <- aggregate(house$price, by=list(house$bathrooms), FUN = median)
+names(agg1) <- c('Bathrooms','Median_Price')
+p <- ggplot(agg1, aes(Bathrooms, Median_Price))
+p +geom_bar(stat = 'identity', colour= 'white', fill = 'red')
+```
+We decided to remove 3 data points for bathroom column.
+```{r}
+#removing the outliers from bathroom columns
+house %>% filter(bathrooms >= 7) #filter the entire row
+house2 <- house[!(house$bathrooms > 7), ]
+
+
+#replot the graph for bathroom columns 
+agg1 <- aggregate(house2$price, by=list(house2$bathrooms), FUN = median)
+names(agg1) <- c('Bathrooms','Median_Price')
+p <- ggplot(agg1, aes(Bathrooms, Median_Price))
+p + geom_bar(stat = 'identity', colour= 'white', fill = 'red')
+```
+Grade and condition are what determined the quality of the house. So, we decided to drop one which is grade. We also dropped 'lat', 'long', 'id', 'date', 'sqft_living15', 'sqft_lot15' columns.
+```{r}
+#condition and grade is to determined the quality of the house (pick one)
+drops <- c('grade', 'lat', 'long', 'id', 'date', 'sqft_living15', 'sqft_lot15')
+house3 <- house2[,!(names(house2) %in% drops)]
+```
+We saved our cleaned dataset into 'house3' and get summary 
+```{r}
+summary(house3)
+```
+## Exploratory Data Analysis: 
+We explored our dataset by plotting different pairing of different features. 
+```{r}
+#The average price of the house: 
+Avg_house_price <- mean(house3$price)
+Avg_house_price
+```
+```{r}
+#numerical correlation matrix 
+final <- house3
+M = cor(final)
+corrplot(M, method='color') # colorful number
+```
+
+```{r}
+correlationMatrix <- cor(final)
+print(correlationMatrix)
+```
+
+```{r}
+# find attributes that are highly corrected (ideally >0.75)
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.5)
+```
+
+```{r}
+# print indexes of highly correlated attributes
+print(highlyCorrelated)
+```
+
+```{r}
+#price distribution: 
+ggplot(final, aes(x= price)) + geom_histogram()
+```
+
+```{r}
+#Plot sqft_living and price 
+agg1 <- aggregate(final$price, by=list(final$sqft_living), FUN = median)
+names(agg1) <- c("sqft_living","Median_Price")
+p <- ggplot(agg1, aes(sqft_living, Median_Price))
+p +geom_bar(stat = "identity", colour="red", fill = "orange")
+```
+House price increased with the increase in square foot living
+House prices below 500,000 dollars have less than 2500 square living area.
+```{r}
+#Boxplot for condition score and price for house with no waterfront
+boxplot(price~condition, data=final[final$waterfront == 0,], main="House Price without Waterfront", xlab="condition", ylab="Price")
+```
+The price of the houses with waterfront are higher compare to the houses without waterfront. The variation in the house condition score in relation to price could be the factor of sqft_living and other variables influence. 
+```{r}
+#Boxplot for condition score and price for house with waterfront
+boxplot(price~condition, data=final[final$waterfront == 1,], main="House Price with Waterfront", xlab="condition", ylab="Price")
+```
+- Homes of conditions 3+ were more expensive than of condition 2 or lower irrespective of waterfront status. 
+- Interestingly enough, condition 3 and 5 houses had higher median values than homes of condition 4. 
+- The  price of the house only increases until a certain price and thereafter the presence of waterfront view do not impact the price a lot.
+
+## Train and test datasets 
+We split our dataset into train and test set with a ratio of 80:20. 
+
+```{r}
+#split the data set to train and test:
+set.seed(1234)
+rnorm(1)
+test_set <- sample(nrow(final), nrow(final) * 0.8)
+house_train <- final[test_set, ]
+house_test <- final[-test_set, ]
+```
+The train set contain one target variable or dependent variable (y) and predictors of y (x)s. 
+```{r}
+# independent variables:
+x_train <- data.matrix(house_train[, c('bedrooms', 'bathrooms', 'sqft_living', 'floors', 'waterfront', 'view', 'condition', 'sqft_above', 'sqft_basement', 'yr_renovated')])
+# dependent variables:
+y_train <- house_train['price']
+```
+The test set also contain one target variable or dependent variable (y) and predictors of y (x)s. 
+```{r}
+#independent variable for test:
+x_test <- data.matrix(house_test[, c('bedrooms', 'bathrooms', 'sqft_living', 'floors', 'waterfront', 'view', 'condition', 'sqft_above', 'sqft_basement', 'yr_renovated')])
+# dependent variables for test:
+y_test <- house_test['price']
+```
+## Linear Regression 
+```{r}
+#Linear Regression
+fit.lm <- lm(final, house_train)
+fit.lm
+```
+**MSE Train for Linear Regression**
+```{r}
+yhat_train_lm <- predict(fit.lm)
+mse_train_lm <- colMeans((y_train - yhat_train_lm)^2)
+mse_train_lm
+```
+**MSE Test for Linear Regression**
+```{r}
+#MSE test
+yhat_test_lm <- predict(fit.lm, house_test)
+mse_test_lm <- colMeans((y_test - yhat_test_lm)^2)
+mse_test_lm
+```
+## Ridge Regression
+First, we fit the variables into the model using glmnet() function 
+```{r}
+# Using glmnet function to build the ridge regression in r
+y_train <- as.numeric(unlist(y_train))
+fit <- glmnet(x_train, y_train, alpha = 0)
+#check the model 
+summary(fit)
+```
+We also fit tried to do cross validation for Ridge Regression to improve the quality of the model 
+```{r}
+# Using cross validation glmnet
+ridge_cv <- cv.glmnet(x_train, y_train, alpha = 0)
+summary(ridge_cv)
+```
+Plot cross validation for Ridge 
+```{r}
+# Best lambda value
+best_lambda <- ridge_cv$lambda.min
+plot(ridge_cv)
+```
+After doing cross validation, we rebuild by fitting ridge_cv using glmnet()
+```{r}
+best_fit <- ridge_cv$glmnet.fit
+head(best_fit)
+```
+Rebuild the model again with the most optimal lamba value 
+```{r}
+# Rebuilding the model with optimal lambda value
+best_ridge <- glmnet(x_train, y_train, alpha = 0)
+```
+Checking the coefficient of Ridge regression 
+```{r}
+#coefficient 
+coef(best_ridge)
+```
+**MSE train for Ridge Regression**
+```{r}
+#Y predict 
+yhat_train_ridge <- predict(best_ridge, x_train, s= best_ridge$best_lambda)
+mse_train_ridge <- mean((y_train - yhat_train_ridge)^2)
+mse_train_ridge
+```
+**MSE test for Ridge Regression**
+```{r}
+#MSE test 
+yhat_test_ridge <- predict(best_ridge, x_test, s= best_ridge$best_lambda)
+mse_test_ridge <- mean((y_test - yhat_test_ridge)^2)
+mse_test_ridge
+
+```
+## Lasso Regression
+First, we fit the variables into the model using glmnet() function. Alpha = 1 indicate that the model is Lasso.
+```{r}
+# Using glmnet function to build the ridge regression in r
+fit <- glmnet(x_train, y_train, alpha = 1)
+#check the model 
+summary(fit)
+```
+Create cross validation for the train data using glmnet() function. 
+```{r}
+# Using cross validation glmnet
+lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1)
+summary(lasso_cv)
+```
+Plot best lambda value for lasso cross validation 
+```{r}
+# Best lambda value
+best_lambda <- lasso_cv$lambda.min
+plot(lasso_cv)
+```
+Fit the function using glmnet() function again 
+```{r}
+best_fit <- lasso_cv$glmnet.fit
+head(best_fit)
+```
+Training the data with the model. 
+```{r}
+# Rebuilding the model with optimal lambda value
+best_lasso <- glmnet(x_train, y_train, alpha = 1, lambda = best_lambda)
+```
+Checking on coefficient 
+```{r}
+#coefficient 
+coef(best_lasso)
+```
+**MSE train for Lasso Regression**
+```{r}
+#Y predict and MSE train 
+yhat_train_lasso <- predict(best_lasso, x_train, s= best_lasso$best_lambda)
+mse_train_lasso <- mean((y_train - yhat_train_lasso)^2)
+mse_train_lasso
+```
+**MSE test for Lasso Regression**
+```{r}
+#MSE test 
+yhat_test_lasso <- predict(best_lasso, x_test, s= best_lasso$best_lambda)
+mse_test_lasso <- mean((y_test - yhat_test_lasso)^2)
+mse_test_lasso
+```
+## Regession Tree
+```{r}
+# install.packages('rpart')
+# install.packages('rpart.plot')
+# loaded regression tree package
+library(rpart)
+library(rpart.plot)
+```
+```{r}
+# grow tree  #zipcode
+fit <- rpart(price~ bedrooms + bathrooms + sqft_living + sqft_lot + floors + waterfront + view + condition + sqft_above + sqft_basement + yr_built + yr_renovated +zipcode,
+             method="anova", data=final)
+printcp(fit) # display the results
+plotcp(fit) # visualize cross-validation results
+summary(fit) # detailed summary of splits
+# create additional plots
+par(mfrow=c(1,2)) # two plots on one page
+rsq.rpart(fit) # visualize cross-validation results
+```
+**The regression tree**
+```{r}
+# plot tree
+# quartz()
+# plot.new()
+par(xpd=TRUE)
+plot(fit, uniform=TRUE,
+     main="Regression Tree for Price ")
+text(fit, use.n=TRUE, all=TRUE, cex=.8)
+```
+Prune the trees 
+```{r}
+# prune the tree
+pfit<- prune(fit, cp=0.01160389) # from cptable
+
+# plot the pruned tree
+plot(fit, uniform=TRUE,
+     main="Pruned Regression Tree for Price")
+text(fit, use.n=TRUE)
+```
+***MSE train for Regression Tree**
+```{r}
+#make predictions
+predictions <- predict(fit, house_train)
+
+#mse train
+mse.rtree <- mean((y_train - predictions)^2)
+print(mse.rtree)
+```
+**MSE test for Regression Tree**
+```{r}
+#mse test
+#make predictions
+predictions.test <- predict(fit, house_test)
+mse.rtreetest <- mean((y_test - predictions.test)^2)
+print(mse.rtreetest)
+
+```
+## Random Forest
+```{r}
+#Loaded the Random Forest package: 
+library(randomForest)
+```
+```{r}
+#split the data set to train and test:
+set.seed(1234)
+rnorm(1)
+test_set <- sample(nrow(final), nrow(final) * 0.8)
+house_train <- final[test_set, ]
+house_test <- final[-test_set, ]
+```
+```{r}
+f1 <- as.formula(price~ bedrooms + bathrooms + sqft_living + sqft_lot + floors + waterfront + view + condition + sqft_above + sqft_basement + yr_built + yr_renovated + zipcode)
+
+x1.train <- model.matrix(f1, house_train)[, -1]
+y.train <- house_train$price
+
+x1.test <- model.matrix(f1, house_test)[, -1]
+y.test <- house_test$price
+```
+Now we are going to create a Random forest model with the target variables and the predictors. 
+```{r}
+#Prediction
+fit.rndfor <- randomForest(f1,
+             house_train,
+             ntree=500,
+             do.trace=F)
+
+varImpPlot(fit.rndfor)
+```
+**Mse train for Random Forest**
+```{r}
+#compute MSE train
+yhat.rndfor <- predict(fit.rndfor, house_train)
+mse.tree <- mean((yhat.rndfor - y.train)^2)
+print(mse.tree)
+```
+**MSE test for Random Forest**
+```{r}
+#compute MSE test
+yhattest.rndfor <- predict(fit.rndfor, house_test)
+mse.test <- mean((yhattest.rndfor - y.test)^2)
+print(mse.test)
+
+```
+## Gradient Boosted Model
+
+```{r}
+#installing.packages for gmb
+#install.packages(c('gbm'))
+```
+```{r}
+# loaded gmb and scales packages 
+library(gbm)
+library(scales)
+```
+```{r}
+# Creating random forest model  
+fit.btree <- gbm(f1, 
+                 data = house_train, 
+                 distribution = 'gaussian', 
+                 n.trees = 100, 
+                 interaction.depth = 2, 
+                 shrinkage = 0.001)
+
+relative.influence(fit.btree)
+
+```
+
+
+```{r}
+#get summary
+summary(fit.btree) 
+```
+As the average number of sqft_living increases the the price increases
+```{r}
+#Plot of Response variable with sqft_living variable
+plot(fit.btree,i="sqft_living") 
+
+```
+The other variables other than sqft_living does not show any significance impact to our target variable. 
+```{r}
+#Plot of Response variable with sqft_lot variable
+plot(fit.btree,i="waterfront")
+```
+
+```{r}
+#numbers of trees
+n.treesno = seq(from=100 ,to=10000, by=100) #no of trees
+#predictions
+yhat.btree <- predict(fit.btree, house_train, n.trees=n.treesno)
+dim(yhat.btree)
+```
+
+
+```{r}
+#compute MSE train
+mse.btree <- mean((yhat.btree - y.train)^2)
+print(mse.btree)
+#357550.15 < square root of MSE train
+```
+**MSE test for Gradient Boosted Model**
+```{r}
+#MSE test
+ytest.btree <- predict(fit.btree, house_test, n.trees=100)
+msetest.btree <- mean((ytest.btree - y.test)^2)
+print(msetest.btree)
+#335567.68 < square root of MSE test 
+```
+## Model Evaluation: 
+The best model to predict the housing price is the Random Forest because it has the lowest RMSE test of 172,788.16. This means that price predict is off by only 172,788.16 with the actual price compared to other models. The worst model is GBM with the highest RMSE of 335,563.50. 
+
+## Recommendation: 
+The following are the recommendation for important stakeholders: 
+- Leverage high value variables to maximize profits for sellers based on important features of the house like waterfront and bigger space. 
+- For buyers, i is important to understand which variables may lead to higher prices and which factors do not influence price
+- For investor looking to buy and sell, its useful to find undervalued homes that have features relating to higher prices and invest in these assets. 
